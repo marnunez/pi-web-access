@@ -18,6 +18,13 @@ test("fetch tools remain registered outside the web_search gate", () => {
 	assert.match(indexSrc, /\n\t}\);\n\n\tpi\.registerTool\(\{\n\t\tname: "fetch_content"/);
 });
 
+test("all web research tools opt into native deferred discovery", () => {
+	for (const name of ["web_search", "fetch_content", "get_search_content"]) {
+		assert.match(indexSrc, new RegExp(`name: "${name}",\\n\\t\\texposure: "deferred",`));
+	}
+	assert.doesNotMatch(indexSrc, /prepareLoadout|setActiveTools/);
+});
+
 test("README documents webSearch.enabled", () => {
 	assert.match(readmeSrc, /"webSearch": \{\n    "enabled": true\n  \}/);
 	assert.match(readmeSrc, /webSearch\.enabled` to `false` to unregister the `web_search` tool/);

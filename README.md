@@ -74,6 +74,19 @@ fetch_content({ url: "/path/to/recording.mp4", prompt: "What error appears on sc
 
 ## Tools
 
+### Native deferred discovery (Pi 1.1+)
+
+`web_search`, `fetch_content`, and `get_search_content` register with `exposure: "deferred"`. They remain available without eagerly sending their schemas to the model. Enable native `codemode` (for example `defaultTools: ["+codemode"]`) and discover/call them from a script:
+
+```js
+text(await searchTools("web search fetch page content"));
+text(await describeTool("web_search"));
+```
+
+Then use `tools.web_search(...)`, `tools.fetch_content(...)`, or `tools.get_search_content(...)` from codemode. Scripts do not need to activate direct schemas. Alternatively, native `tool_search` can load the schemas for direct model calls. Older Pi versions without exposure support may still declare the tools directly.
+
+Explicit activation, including listing these names in `--tools` or an eager preset, can override deferred presentation. Remove them from eager preset lists when using discovery; availability and permission are not determined by schema visibility. Restricted agents must still permit the underlying tools. This extension does not change active tools, permission checks, or session discovery state. `/websearch`, `/search`, `/curator`, feature-disable configuration and result persistence remain unchanged.
+
 ### web_search
 
 Search the web via OpenAI, Brave, Parallel, Tavily, Exa, Perplexity AI, or Gemini. Returns a synthesized answer with source citations.
@@ -310,6 +323,20 @@ Values use the same format as pi keybindings (e.g. `ctrl+s`, `ctrl+shift+s`, `al
 Set `"enabled": false` under any feature to disable it. Config changes require a Pi restart.
 
 Rate limits: Perplexity is capped at 10 requests/minute (client-side). Content fetches run 3 concurrent with a 30s timeout per URL.
+
+## Development checks
+
+`npm test` runs the ordinary regression suite. The native Pi 1.1 integration is optional:
+
+```sh
+PI_V1_SDK_PATH=/absolute/path/to/pi/dist/index.js npm run test:pi-v1
+# Optional integration with the actual preset and child-session extensions:
+PI_V1_SDK_PATH=/absolute/path/to/pi/dist/index.js \
+PI_PRESET_EXTENSION_PATH=/path/to/pi-preset.ts \
+PI_SUBAGENT_EXTENSION_PATH=/path/to/subagent-done.ts npm run test:pi-v1
+```
+
+It captures first-request schemas with Pi's local faux provider, compares eager and deferred presentation, exercises discovery/fetch/stored-content retrieval through codemode against a disposable loopback server, and verifies a restricted agent cannot discover or execute these tools. Optional preset/child paths test those integrations with the same real definitions. No external search, browser, paid provider, or remote model request is made. The loopback SSRF exception exists only in the temporary test profile.
 
 ## Limitations
 
