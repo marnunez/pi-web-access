@@ -76,14 +76,14 @@ fetch_content({ url: "/path/to/recording.mp4", prompt: "What error appears on sc
 
 ### Native deferred discovery (Pi 1.1+)
 
-`web_search`, `fetch_content`, and `get_search_content` register with `exposure: "deferred"`. They remain available without eagerly sending their schemas to the model. Enable native `codemode` (for example `defaultTools: ["+codemode"]`) and discover/call them from a script:
+`web_search`, `fetch_content`, and `get_search_content` register with `exposure: "deferred"`. They remain available without eagerly sending their schemas to the model. Enable native `codemode` (for example `defaultTools: ["+codemode", "+tool_search"]`) and discover/call them from a script:
 
 ```js
 text(await searchTools("web search fetch page content"));
 text(await describeTool("web_search"));
 ```
 
-Then use `tools.web_search(...)`, `tools.fetch_content(...)`, or `tools.get_search_content(...)` from codemode. Scripts do not need to activate direct schemas. Alternatively, native `tool_search` can load the schemas for direct model calls. Older Pi versions without exposure support may still declare the tools directly.
+Then use `tools.web_search(...)`, `tools.fetch_content(...)`, or `tools.get_search_content(...)` from codemode. Scripts do not need to activate direct schemas. Alternatively, call native `tool_search` (enabled alongside codemode) to load matching schemas, then call `fetch_content(...)` or the other tools normally. Codemode's `searchTools()` only inspects the callable catalogue; it does not activate direct schemas. Older Pi versions without exposure support may still declare the tools directly.
 
 Explicit activation, including listing these names in `--tools` or an eager preset, can override deferred presentation. Remove them from eager preset lists when using discovery; availability and permission are not determined by schema visibility. Restricted agents must still permit the underlying tools. This extension does not change active tools, permission checks, or session discovery state. `/websearch`, `/search`, `/curator`, feature-disable configuration and result persistence remain unchanged.
 
@@ -336,7 +336,7 @@ PI_PRESET_EXTENSION_PATH=/path/to/pi-preset.ts \
 PI_SUBAGENT_EXTENSION_PATH=/path/to/subagent-done.ts npm run test:pi-v1
 ```
 
-It captures first-request schemas with Pi's local faux provider, compares eager and deferred presentation, exercises discovery/fetch/stored-content retrieval through codemode against a disposable loopback server, and verifies a restricted agent cannot discover or execute these tools. Optional preset/child paths test those integrations with the same real definitions. No external search, browser, paid provider, or remote model request is made. The loopback SSRF exception exists only in the temporary test profile.
+It captures first-request schemas with Pi's local faux provider, compares eager and deferred presentation, exercises codemode discovery plus native `tool_search` followed by normal direct fetch/stored-content/search-validation calls against a disposable loopback server, and verifies a restricted agent cannot discover or execute these tools. Optional preset/child paths test those integrations with the same real definitions. No external search, browser, paid provider, or remote model request is made. The loopback SSRF exception exists only in the temporary test profile.
 
 ## Limitations
 

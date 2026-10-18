@@ -12,7 +12,7 @@ const presetPath=process.env.PI_PRESET_EXTENSION_PATH;
 const childPath=process.env.PI_SUBAGENT_EXTENSION_PATH;
 const pilot=['web_search','fetch_content','get_search_content'];
 
-test('native deferred schemas, codemode execution and restricted discovery', {skip:!sdkPath}, async()=>{
+test('native deferred schemas, codemode/direct calls and restricted discovery', {skip:!sdkPath}, async()=>{
   const sdk=await import(pathToFileURL(sdkPath).href);
   const ai=await import(new URL('./dist/index.js',pathToFileURL(findPackageJSON('@earendil-works/pi-ai',pathToFileURL(sdkPath)))).href);
   sdk.initTheme('dark',false);
@@ -35,11 +35,11 @@ test('native deferred schemas, codemode execution and restricted discovery', {sk
     const extensionPath=fileURLToPath(new URL('../index.ts',import.meta.url));
     const start=async({eager=false,restricted=false,full=false,child=false}={})=>{
       if(session) session.dispose();
-      const allowed=restricted?['read','codemode']:child?['read','codemode','tool_search',...pilot,'subagent_done']:undefined;
+      const allowed=restricted?['read','codemode','tool_search']:child?['read','codemode','tool_search',...pilot,'subagent_done']:undefined;
       if(restricted||child){process.env.PI_SUBAGENT_ID='child-probe';process.env.PI_SUBAGENT_TOOLS=allowed.join(',');}
       else {delete process.env.PI_SUBAGENT_ID;delete process.env.PI_SUBAGENT_TOOLS;}
-      writeFileSync(join(agentDir,'presets.json'),JSON.stringify({$default:'coding',coding:{tools:['read','codemode',...(eager?pilot:[])]},full:{tools:['*']}}));
-      const settings=sdk.SettingsManager.inMemory({defaultTools:['read','codemode'],retry:{enabled:false}});
+      writeFileSync(join(agentDir,'presets.json'),JSON.stringify({$default:'coding',coding:{tools:['read','codemode','tool_search',...(eager?pilot:[])]},full:{tools:['*']}}));
+      const settings=sdk.SettingsManager.inMemory({defaultTools:['read','codemode','tool_search'],retry:{enabled:false}});
       const loader=new sdk.DefaultResourceLoader({cwd:root,agentDir,settingsManager:settings,noExtensions:true,noContextFiles:true,noSkills:true,noThemes:true,noPromptTemplates:true,
         additionalExtensionPaths:[extensionPath,...(presetPath?[presetPath]:[]),...(child&&childPath?[childPath]:[])],extensionFactories:[sdk.createCodemodeExtension({models:false}),sdk.createToolSearchExtension()]});
       await loader.reload();
@@ -83,21 +83,45 @@ test('native deferred schemas, codemode execution and restricted discovery', {sk
     assert.ok(result.content.some(part=>part.type==='text'&&part.text.includes('DEFERRED_EXECUTION_OK')));
     assert.equal(requests,2,'Only the two local fixture fetches should occur');
     assert.ok(pilot.every(name=>!session.getActiveToolNames().includes(name)),'Codemode execution must not activate direct schemas');
-    let expectedFetches=2;
+    const directFlow=async(label)=>{
+      let before,loaded;
+      faux.setResponses([
+        context=>{before=ai.getCurrentTools(context.messages).map(tool=>tool.name);return ai.fauxAssistantMessage(ai.fauxToolCall('tool_search',{query:'web_search fetch_content get_search_content',limit:3}),{stopReason:'toolUse'});},
+        context=>{loaded=ai.getCurrentTools(context.messages).map(tool=>tool.name);return ai.fauxAssistantMessage(ai.fauxToolCall('fetch_content',{url:url+'/direct-'+label}),{stopReason:'toolUse'});},
+        ()=>{const fetched=session.messages.findLast(message=>message.role==='toolResult'&&message.toolName==='fetch_content');return ai.fauxAssistantMessage(ai.fauxToolCall('get_search_content',{responseId:fetched.details.responseId,urlIndex:0}),{stopReason:'toolUse'});},
+        ai.fauxAssistantMessage(ai.fauxToolCall('web_search',{query:'',workflow:'none'}),{stopReason:'toolUse'}),
+        ai.fauxAssistantMessage('direct calls checked'),
+      ]);
+      await session.prompt('Discover the web tools and call them directly.');
+      assert.ok(before.includes('tool_search')&&pilot.every(name=>!before.includes(name)));
+      assert.ok(pilot.every(name=>loaded.includes(name)),'Native tool_search must load schemas for normal direct calls');
+      const stored=session.messages.findLast(message=>message.role==='toolResult'&&message.toolName==='get_search_content');
+      assert.ok(stored.content.some(part=>part.type==='text'&&part.text.includes('DEFERRED_FIXTURE /direct-'+label)));
+      const search=session.messages.findLast(message=>message.role==='toolResult'&&message.toolName==='web_search');
+      assert.ok(search.content.some(part=>part.type==='text'&&part.text.includes('No query provided')));
+    };
+    await directFlow('parent');
+    let expectedFetches=3;
     if(presetPath){await start({full:true});await capture('fullPreset');assert.deepEqual(metrics.fullPreset.schemas,[]);}
     if(childPath){
       await start({child:true});await capture('permittedChild');assert.deepEqual(metrics.permittedChild.schemas,[]);
       faux.setResponses([ai.fauxAssistantMessage(ai.fauxToolCall('codemode',{code}),{stopReason:'toolUse'}),ai.fauxAssistantMessage('child execution checked')]);
       await session.prompt('Run the same permitted fixture inside a child.');
       assert.equal(session.messages.findLast(message=>message.role==='toolResult'&&message.toolName==='codemode').isError,false);
-      expectedFetches=4;assert.equal(requests,expectedFetches);
+      expectedFetches+=2;assert.equal(requests,expectedFetches);
+      await directFlow('child');expectedFetches++;assert.equal(requests,expectedFetches);
     }
     await start({restricted:true});await capture('restrictedReviewer');
     for(const name of pilot) assert.ok(!session.getAllTools().some(tool=>tool.name===name),'Restricted registry leaked '+name);
-    faux.setResponses([ai.fauxAssistantMessage(ai.fauxToolCall('codemode',{code:'if (await describeTool("fetch_content")) throw new Error("Forbidden tool discovered"); await tools.fetch_content({url:"http://127.0.0.1/forbidden"});'}),{stopReason:'toolUse'}),ai.fauxAssistantMessage('restriction checked')]);
+    faux.setResponses([
+      ai.fauxAssistantMessage(ai.fauxToolCall('tool_search',{query:'web_search fetch_content get_search_content',limit:3}),{stopReason:'toolUse'}),
+      ai.fauxAssistantMessage(ai.fauxToolCall('codemode',{code:'if (await describeTool("fetch_content")) throw new Error("Forbidden tool discovered"); await tools.fetch_content({url:"http://127.0.0.1/forbidden"});'}),{stopReason:'toolUse'}),
+      ai.fauxAssistantMessage('restriction checked'),
+    ]);
     await session.prompt('Verify the forbidden web tool cannot be called.');
     assert.equal(session.messages.findLast(message=>message.role==='toolResult'&&message.toolName==='codemode').isError,true);
     assert.equal(requests,expectedFetches,'Restricted calls must not reach even the local fixture');
+    assert.ok(pilot.every(name=>!session.getActiveToolNames().includes(name)),'Native discovery must not load forbidden tools');
     assert.deepEqual(errors,[]);
     console.log('First-request web schemas: '+JSON.stringify(metrics));
   } finally {
